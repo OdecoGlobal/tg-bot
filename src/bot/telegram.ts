@@ -1,0 +1,338 @@
+import TelegramBot from 'node-telegram-bot-api';
+import { prisma } from '../db/prisma';
+
+const ADMIN_TELEGRAM_CHAT_ID = process.env.ADMIN_TELEGRAM_CHAT_ID!;
+export const telegramBot = new TelegramBot(process.env.TELEGRAM_TOKEN!, {
+  polling: {
+    interval: 300,
+    autoStart: false,
+    params: {
+      timeout: 10,
+    },
+  },
+});
+
+telegramBot.on('polling_error', (error: any) => {
+  console.error('❌ Polling error:', error.code, error.message);
+
+  if (error.code === 'EFATAL') {
+    console.log('🔄 EFATAL detected - attempting recovery...');
+
+    telegramBot
+      .stopPolling()
+      .then(() => {
+        console.log('✅ Polling stopped');
+
+        setTimeout(() => {
+          console.log('🔄 Restarting polling...');
+          telegramBot
+            .startPolling({ restart: true })
+            .then(() => console.log('✅ Polling restarted successfully'))
+            .catch(err => console.error('❌ Failed to restart polling:', err));
+        }, 5000);
+      })
+      .catch(err => {
+        console.error('❌ Error stopping polling:', err);
+      });
+  }
+});
+
+telegramBot.on('error', (error: any) => {
+  console.error('❌ Bot error:', error);
+});
+
+telegramBot.on('webhook_error', (error: any) => {
+  console.error('❌ Webhook error:', error);
+});
+
+export async function setupCommands() {
+  await telegramBot.setMyCommands([
+    {
+      command: 'start',
+      description: 'Start the bot and subscribe to job alerts',
+    },
+    { command: 'stop', description: 'Unsubscribe from job alerts' },
+    { command: 'setkeyword', description: 'Set your job search keyword' },
+    { command: 'preferences', description: 'View your preferences' },
+    { command: 'clear', description: 'Clear all preferences' },
+    { command: 'scan', description: 'Manually trigger a job scan' },
+  ]);
+
+  await telegramBot.setMyCommands(
+    [
+      {
+        command: 'start',
+        description: 'Start the bot and subscribe to job alerts',
+      },
+      { command: 'stop', description: 'Unsubscribe from job alerts' },
+      { command: 'setkeyword', description: 'Set your job search keyword' },
+      { command: 'preferences', description: 'View your preferences' },
+      { command: 'clear', description: 'Clear all preferences' },
+      { command: 'scan', description: 'Manually trigger a job scan' },
+      { command: 'debug', description: 'Debug info' },
+    ],
+    { scope: { type: 'chat', chat_id: ADMIN_TELEGRAM_CHAT_ID } },
+  );
+}
+
+telegramBot.onText(/\/start/, async msg => {
+  const chatId = msg.chat.id.toString();
+
+  await prisma.user.upsert({
+    where: { telegramId: chatId },
+    update: { active: true }, // mark user as active
+    create: { telegramId: chatId, name: msg.from?.first_name, active: true },
+  });
+
+  await telegramBot.sendMessage(
+    chatId,
+    `🎉 Welcome to Job Bot!\n\n` +
+      `Send me job keywords you're interested in (e.g., 'react', 'python')\n\n` +
+      `Commands:\n` +
+      `/start - Start the bot\n` +
+      `/stop - Unsubscribe\n` +
+      `/setkeyword - Add keyword\n` +
+      `/preferences - View preferences\n` +
+      `/clear - Clear preferences\n` +
+      `/scan - Manually scan jobs\n` +
+      `/debug - View system stats (admin only)`,
+  );
+});
+
+telegramBot.onText(/\/stop/, async msg => {
+  const chatId = msg.chat.id.toString();
+
+  await prisma.user.updateMany({
+    where: { telegramId: chatId },
+    data: { active: false },
+  });
+
+  await telegramBot.sendMessage(
+    chatId,
+    '🛑 You have unsubscribed from job alerts. You can /start anytime to re-subscribe.',
+  );
+});
+
+telegramBot.onText(/\/preferences/, async msg => {
+  const chatId = msg.chat.id.toString();
+  console.log(`📨 /preferences command from ${chatId}`);
+
+  const user = await prisma.user.findUnique({
+    where: { telegramId: chatId },
+    include: { preferences: true },
+  });
+
+  if (!user?.preferences || user.preferences.length === 0) {
+    await telegramBot.sendMessage(
+      chatId,
+      "You don't have any preferences set yet.\n\nJust send me keywords like 'react' or 'python'!",
+    );
+    return;
+  }
+
+  const keywords = user.preferences.map(p => p.keyword).join(', ');
+  await telegramBot.sendMessage(
+    chatId,
+    `📋 Your job preferences:\n${keywords}\n\nSend new keywords to add more!`,
+  );
+});
+
+telegramBot.onText(/\/clear/, async msg => {
+  const chatId = msg.chat.id.toString();
+  console.log(`📨 /clear command from ${chatId}`);
+
+  await prisma.preference.deleteMany({
+    where: {
+      user: { telegramId: chatId },
+    },
+  });
+
+  await telegramBot.sendMessage(chatId, '✅ All preferences cleared!');
+});
+
+telegramBot.onText(/\/scan/, async msg => {
+  const chatId = msg.chat.id.toString();
+  console.log(`📨 /scan command from ${chatId}`);
+
+  await telegramBot.sendMessage(
+    chatId,
+    '🔍 Scanning...\n\n' +
+      '• Max 20 jobs per site\n' +
+      '• Jobs from last 2 days only\n\n' +
+      'This may take a moment...',
+  );
+
+  try {
+    const { scanRemoteOKJobs, scanWeWorkRemotelyJobs, scanRemotiveJobs } =
+      await import('../services/scan.service');
+
+    console.log('🧪 Manual scan triggered by user');
+
+    const scanOptions = {
+      maxJobsPerSite: 20,
+      maxAgeInDays: 2,
+      isManualScan: true,
+    };
+
+    await scanRemoteOKJobs(scanOptions);
+    await scanWeWorkRemotelyJobs(scanOptions);
+    await scanRemotiveJobs(scanOptions);
+
+    const jobCount = await prisma.job.count({
+      where: {
+        createdAt: {
+          gte: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+        },
+      },
+    });
+
+    await telegramBot.sendMessage(
+      chatId,
+      `✅ Manual scan completed!\n\n📊 Found ${jobCount} jobs from the last 2 days.`,
+    );
+  } catch (error) {
+    console.error('Error during manual scan:', error);
+    await telegramBot.sendMessage(
+      chatId,
+      '❌ Error during scan. Try again later',
+    );
+  }
+});
+
+telegramBot.onText(/\/debug/, async msg => {
+  const chatId = msg.chat.id.toString();
+  console.log(`📨 /debug command from ${chatId}`);
+  if (chatId !== ADMIN_TELEGRAM_CHAT_ID) {
+    return;
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { telegramId: chatId },
+      include: { preferences: true },
+    });
+
+    const allUsers = await prisma.user.count();
+    const allPrefs = await prisma.preference.count();
+    const allJobs = await prisma.job.count();
+
+    const recentJobs = await prisma.job.findMany({
+      take: 3,
+      orderBy: { createdAt: 'desc' },
+      select: { title: true, source: true, keyword: true, createdAt: true },
+    });
+
+    let message = `🔍 *Stat Info*\n\n`;
+    message += `*Your Data:*\n`;
+    message += `• User ID: ${user?.id || 'Not found'}\n`;
+    message += `• Preferences: ${user?.preferences.length || 0}\n`;
+
+    if (user?.preferences && user.preferences.length > 0) {
+      user.preferences.forEach(p => {
+        message += `  - ${p.keyword}\n`;
+      });
+    }
+
+    message += `\n*System Stats:*\n`;
+    message += `• Total Users: ${allUsers}\n`;
+    message += `• Total Preferences: ${allPrefs}\n`;
+    message += `• Total Jobs in DB: ${allJobs}\n`;
+
+    if (recentJobs.length > 0) {
+      message += `\n*Last ${recentJobs.length} Jobs Found:*\n`;
+      recentJobs.forEach(j => {
+        const timeAgo = Math.floor(
+          (Date.now() - j.createdAt.getTime()) / 60000,
+        );
+        message += `• ${j.title.substring(0, 40)}...\n`;
+        message += `  ${j.source} | ${j.keyword} | ${timeAgo}m ago\n`;
+      });
+    } else {
+      message += `\n⚠️ No jobs found yet!\n`;
+    }
+
+    await telegramBot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error('Error in debug command:', error);
+    await telegramBot.sendMessage(chatId, '❌ Error fetching debug info');
+  }
+});
+
+telegramBot.on('message', async msg => {
+  if (msg.text?.startsWith('/')) return;
+
+  const chatId = msg.chat.id.toString();
+  const keyword = msg.text?.trim().toLowerCase();
+
+  if (!keyword) return;
+
+  console.log(`📨 Received keyword "${keyword}" from ${chatId}`);
+
+  const user = await prisma.user.upsert({
+    where: { telegramId: chatId },
+    update: {},
+    create: {
+      telegramId: chatId,
+      name: msg.from?.first_name,
+    },
+  });
+
+  const existing = await prisma.preference.findFirst({
+    where: {
+      userId: user.id,
+      keyword: keyword,
+    },
+  });
+
+  if (existing) {
+    await telegramBot.sendMessage(
+      chatId,
+      `You're already tracking "${keyword}" jobs!`,
+    );
+    return;
+  }
+
+  await prisma.preference.create({
+    data: {
+      keyword: keyword,
+      userId: user.id,
+    },
+  });
+
+  console.log(`✅ Added preference "${keyword}" for user ${chatId}`);
+
+  await telegramBot.sendMessage(
+    chatId,
+    `✅ Added "${keyword}" to your preferences!\n\nI'll notify you about new ${keyword} jobs.`,
+  );
+});
+
+export async function sendTelegramMessage(
+  chatId: string | number,
+  message: string,
+) {
+  try {
+    await telegramBot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  } catch (error) {
+    console.error(`Failed to send message to ${chatId}:`, error);
+  }
+}
+
+setTimeout(() => {
+  console.log('🚀 Starting Telegram bot polling...');
+  telegramBot
+    .startPolling({ restart: true })
+    .then(() => {
+      console.log('✅ Telegram bot polling started successfully');
+    })
+    .catch(err => {
+      console.error('❌ Failed to start polling:', err);
+      console.log('💡 Make sure webhook is deleted. Run:');
+      console.log(
+        `   curl -X POST "https://api.telegram.org/bot<TOKEN>/deleteWebhook?drop_pending_updates=true"`,
+      );
+    });
+}, 2000);
+
+setupCommands().then(() => console.log('✅ Telegram commands configured'));
+console.log('Telegram bot initialized');
