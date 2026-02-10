@@ -80,7 +80,7 @@ telegramBot.onText(/\/start/, async msg => {
 
   await prisma.user.upsert({
     where: { telegramId: chatId },
-    update: { active: true }, // mark user as active
+    update: { active: true },
     create: { telegramId: chatId, name: msg.from?.first_name, active: true },
   });
 
@@ -148,6 +148,43 @@ telegramBot.onText(/\/clear/, async msg => {
   });
 
   await telegramBot.sendMessage(chatId, '✅ All preferences cleared!');
+});
+
+telegramBot.onText(/\/setkeyword (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id.toString();
+  const keyword = match?.[1]?.trim().toLowerCase();
+
+  if (!keyword) {
+    return telegramBot.sendMessage(
+      chatId,
+      '❌ Please provide a keyword. Usage: /setkeyword react',
+    );
+  }
+
+  const user = await prisma.user.upsert({
+    where: { telegramId: chatId },
+    update: {},
+    create: { telegramId: chatId, name: msg.from?.first_name, active: true },
+  });
+
+  const existing = await prisma.preference.findFirst({
+    where: { userId: user.id, keyword },
+  });
+
+  if (existing) {
+    return telegramBot.sendMessage(
+      chatId,
+      `You're already tracking "${keyword}" jobs!`,
+    );
+  }
+
+  await prisma.preference.create({
+    data: { userId: user.id, keyword },
+  });
+  await telegramBot.sendMessage(
+    chatId,
+    `✅ Added "${keyword}" to your preferences!`,
+  );
 });
 
 telegramBot.onText(/\/scan/, async msg => {
