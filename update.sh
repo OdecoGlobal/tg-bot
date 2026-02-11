@@ -9,6 +9,9 @@ docker compose build app
 
 docker compose up -d app
 
+echo  "Running database migrations..."
+docker compose exec -T app npx prisma migrate deploy
+
 echo "📝 Checking logs..."
 docker compose logs --tail=30 app
 
