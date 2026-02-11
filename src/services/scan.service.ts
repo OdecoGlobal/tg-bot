@@ -4,14 +4,14 @@ import { fetchRemoteOK } from '../scrapper/remoteok';
 import { fetchWeWorkRemotely } from '../scrapper/weworkremotely';
 import { fetchRemotive } from '../scrapper/remotive';
 
-interface ScanOptions {
+type ScanOptions = {
   maxJobsPerSite?: number;
   maxAgeInDays?: number;
   isManualScan?: boolean;
   triggeringUserId?: string;
-}
+};
 
-async function handleJobs(
+export async function handleJobs(
   source: string,
   keyword: string,
   jobs: any[],
@@ -24,109 +24,104 @@ async function handleJobs(
     triggeringUserId,
   } = options;
 
-  let newJobsCount = 0;
-  let processedCount = 0;
-
   const jobsToProcess = jobs.slice(0, maxJobsPerSite);
 
   for (const job of jobsToProcess) {
-    processedCount++;
-
-    const exists = await prisma.job.findUnique({
+    let jobRecord = await prisma.job.upsert({
       where: { link: job.link },
+      update: {},
+      create: {
+        ...job,
+        source,
+        keyword,
+      },
     });
 
-    if (!exists) {
-      const created = await prisma.job.create({
-        data: {
-          ...job,
-          source,
-          keyword,
+    let targetUsers = [];
+
+    if (isManualScan && triggeringUserId) {
+      const user = await prisma.user.findUnique({
+        where: { telegramId: triggeringUserId },
+        include: { preferences: true },
+      });
+      if (user) targetUsers.push(user);
+    } else {
+      targetUsers = await prisma.user.findMany({
+        where: {
+          preferences: {
+            some: { keyword },
+          },
         },
+        include: { preferences: true },
+      });
+    }
+
+    for (const user of targetUsers) {
+      const alreadyDelivered = await prisma.jobDelivery.findUnique({
+        where: { jobId_userId: { jobId: jobRecord.id, userId: user.id } },
       });
 
-      newJobsCount++;
+      if (alreadyDelivered) continue;
+
+      if (isManualScan && maxAgeInDays) {
+        const jobAgeMs = Date.now() - jobRecord.createdAt.getTime();
+        const maxAgeMs = maxAgeInDays * 24 * 60 * 60 * 1000;
+        if (jobAgeMs > maxAgeMs) continue;
+      }
 
       await processQueue.add('processJob', {
-        job: created.id,
+        job: jobRecord.id,
         keyword,
         isManualScan,
-        triggeringUserId,
+        triggeringUserId: user.telegramId,
       });
-    } else {
-      if (isManualScan && maxAgeInDays) {
-        const jobAge = Date.now() - exists.createdAt.getTime();
-        const maxAge = maxAgeInDays * 24 * 60 * 60 * 1000;
-
-        if (jobAge <= maxAge) {
-          await processQueue.add('processJob', {
-            job: exists.id,
-            keyword,
-            isManualScan,
-            triggeringUserId,
-          });
-        }
-      }
     }
   }
+}
 
-  if (jobs.length > maxJobsPerSite) {
+async function scanSite(
+  siteName: 'RemoteOK' | 'WeWorkRemotely' | 'Remotive',
+  fetchFn: (keyword: string) => Promise<any[]>,
+  options: ScanOptions = {},
+) {
+  const preferences = await prisma.preference.findMany({
+    distinct: ['keyword'],
+  });
+
+  if (!preferences.length) return;
+
+  const maxJobsPerSite = options.maxJobsPerSite || 10;
+  let totalJobsProcessed = 0;
+
+  for (const pref of preferences) {
+    if (totalJobsProcessed >= maxJobsPerSite) break;
+
+    try {
+      const jobs = await fetchFn(pref.keyword);
+
+      const remaining = maxJobsPerSite - totalJobsProcessed;
+      const jobsToHandle = jobs.slice(0, remaining);
+
+      await handleJobs(siteName, pref.keyword, jobsToHandle, options);
+
+      totalJobsProcessed += jobsToHandle.length;
+    } catch (error: any) {
+      console.error(
+        `❌ Error scanning ${siteName} for "${pref.keyword}":`,
+        error.message,
+      );
+    }
   }
 }
 
 export async function scanRemoteOKJobs(options: ScanOptions = {}) {
-  const preferences = await prisma.preference.findMany({
-    distinct: ['keyword'],
-  });
-
-  if (preferences.length === 0) {
-    return;
-  }
-
-  for (const pref of preferences) {
-    try {
-      const jobs = await fetchRemoteOK(pref.keyword);
-      await handleJobs('RemoteOK', pref.keyword, jobs, options);
-    } catch (error: any) {
-      console.error(`   ❌ Error:`, error.message);
-    }
-  }
+  return scanSite('RemoteOK', fetchRemoteOK, options);
 }
 
 export async function scanWeWorkRemotelyJobs(options: ScanOptions = {}) {
-  const preferences = await prisma.preference.findMany({
-    distinct: ['keyword'],
-  });
-
-  if (preferences.length === 0) {
-    return;
-  }
-
-  for (const pref of preferences) {
-    try {
-      const jobs = await fetchWeWorkRemotely(pref.keyword);
-      await handleJobs('WeWorkRemotely', pref.keyword, jobs, options);
-    } catch (error: any) {
-      console.error(`   ❌ Error:`, error.message);
-    }
-  }
+  return scanSite('WeWorkRemotely', fetchWeWorkRemotely, options);
 }
 
 export async function scanRemotiveJobs(options: ScanOptions = {}) {
-  const preferences = await prisma.preference.findMany({
-    distinct: ['keyword'],
-  });
-
-  if (preferences.length === 0) {
-    return;
-  }
-
-  for (const pref of preferences) {
-    try {
-      const jobs = await fetchRemotive(pref.keyword);
-      await handleJobs('Remotive', pref.keyword, jobs, options);
-    } catch (error: any) {
-      console.error(`   ❌ Error:`, error.message);
-    }
-  }
+  return scanSite('Remotive', fetchRemotive, options);
 }

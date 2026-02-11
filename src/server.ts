@@ -11,6 +11,7 @@ import { registerScheduler } from './queues/scanner.queue';
 import './bot/telegram';
 import './workers/process.worker';
 import './workers/scanner.worker';
+import './queues/cleanup.queue';
 
 const PORT = process.env.PORT || 7000;
 

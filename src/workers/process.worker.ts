@@ -70,12 +70,19 @@ new Worker(
         const user = await prisma.user.findUnique({
           where: { telegramId: triggeringUserId },
         });
+        if (!user) return;
 
-        if (user) {
+        const delivered = await prisma.jobDelivery.findUnique({
+          where: { jobId_userId: { jobId, userId: user.id } },
+        });
+
+        if (!delivered) {
           await sendTelegramMessage(user.telegramId, message);
+          await prisma.jobDelivery.create({ data: { jobId, userId: user.id } });
         }
         return;
       }
+
       const interestedUsers = await prisma.user.findMany({
         where: {
           preferences: {
@@ -90,14 +97,19 @@ new Worker(
       });
 
       for (const user of interestedUsers) {
+        const delivered = await prisma.jobDelivery.findUnique({
+          where: { jobId_userId: { jobId, userId: user.id } },
+        });
+        if (delivered) continue;
         try {
           await sendTelegramMessage(user.telegramId, message);
+          await prisma.jobDelivery.create({ data: { jobId, userId: user.id } });
         } catch (error) {
           console.error(`❌ Failed to send to user ${user.telegramId}:`, error);
         }
       }
     } catch (error) {
-      console.error('Error processing job:', error);
+      console.error('Worker Error:', error);
       throw error;
     }
   },
