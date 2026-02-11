@@ -1,5 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { prisma } from '../db/prisma';
+import { processQueue } from '../queues/process.queue';
 
 const ADMIN_TELEGRAM_CHAT_ID = process.env.ADMIN_TELEGRAM_CHAT_ID!;
 
@@ -12,6 +13,15 @@ export const telegramBot = new TelegramBot(process.env.TELEGRAM_TOKEN!, {
     },
   },
 });
+
+async function removeUserJobs(userId: string) {
+  const jobs = await processQueue.getJobs(['delayed', 'wait', 'active']);
+  for (const job of jobs) {
+    if (job.data.triggeringUserId === userId) {
+      await job.remove();
+    }
+  }
+}
 
 telegramBot.on('polling_error', (error: any) => {
   console.error('❌ Polling error:', error.code, error.message);
@@ -107,6 +117,8 @@ telegramBot.onText(/\/stop/, async msg => {
     data: { active: false },
   });
 
+  await removeUserJobs(chatId);
+
   await telegramBot.sendMessage(
     chatId,
     '🛑 You have unsubscribed from job alerts. You can /start anytime to re-subscribe.',
@@ -144,6 +156,8 @@ telegramBot.onText(/\/clear/, async msg => {
       user: { telegramId: chatId },
     },
   });
+
+  await removeUserJobs(chatId);
 
   await telegramBot.sendMessage(chatId, '✅ All preferences cleared!');
 });
