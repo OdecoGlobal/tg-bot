@@ -8,7 +8,13 @@ import {
 import { sendTelegramMessage } from '../bot/telegram';
 import { prisma } from '../db/prisma';
 
-async function notifyUsersWithPreferences(message: string) {
+const lastNoJobsNotification = new Map<string, number>();
+const NO_JOBS_NOTIFICATION_INTERVAL = 12 * 60 * 60 * 1000;
+
+async function notifyUsersWithPreferences(
+  message: string,
+  onlyIfIntervalPassed = false,
+) {
   const activeUsers = await prisma.user.findMany({
     where: {
       active: true,
@@ -20,98 +26,59 @@ async function notifyUsersWithPreferences(message: string) {
 
   for (const user of activeUsers) {
     try {
+      if (onlyIfIntervalPassed) {
+        const lastNotified = lastNoJobsNotification.get(user.telegramId) || 0;
+        const timeSinceLastNotification = Date.now() - lastNotified;
+
+        if (timeSinceLastNotification < NO_JOBS_NOTIFICATION_INTERVAL) {
+          continue;
+        }
+
+        lastNoJobsNotification.set(user.telegramId, Date.now());
+      }
+
       await sendTelegramMessage(user.telegramId, message);
-    } catch (error) {
-      console.error(`Failed to notify user ${user.telegramId}:`, error);
-    }
+    } catch (error) {}
   }
-}
-
-async function getLatestJobsSummary() {
-  const cutoffTime = new Date(Date.now() - 10 * 60 * 1000);
-  const recentJobs = await prisma.job.findMany({
-    where: {
-      createdAt: {
-        gte: cutoffTime,
-      },
-    },
-    select: {
-      id: true,
-      title: true,
-      source: true,
-      keyword: true,
-      createdAt: true,
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  });
-
-  return recentJobs;
 }
 
 new Worker(
   'scannerQueue',
   async job => {
     try {
-      console.log(`🔍 Auto scan started: ${job.name}`);
-
-      await notifyUsersWithPreferences('🔍 Scanning for latest jobs...');
+      console.log('🔍 Auto scan started');
 
       const scanOptions = {
         maxJobsPerSite: 20,
-        maxAgeInDays: 0.25,
+        maxAgeInDays: 0.04,
         isManualScan: false,
       };
 
-      switch (job.name) {
-        case 'scanRemoteOk':
-          await scanRemoteOKJobs(scanOptions);
-          break;
-        case 'scanWeWorkRemotely':
-          await scanWeWorkRemotelyJobs(scanOptions);
-          break;
-        case 'scanIndeed':
-          await scanRemotiveJobs(scanOptions);
-          break;
-      }
+      const jobCountBefore = await prisma.job.count();
+
+      await Promise.all([
+        scanRemoteOKJobs(scanOptions),
+        scanWeWorkRemotelyJobs(scanOptions),
+        scanRemotiveJobs(scanOptions),
+      ]);
 
       await new Promise(resolve => setTimeout(resolve, 3000));
 
-      const latestJobs = await getLatestJobsSummary();
+      const jobCountAfter = await prisma.job.count();
+      const newJobsCount = jobCountAfter - jobCountBefore;
 
-      if (latestJobs.length === 0) {
+      if (newJobsCount === 0) {
         await notifyUsersWithPreferences(
-          '✅ Scan complete. No new jobs found in the last few hours.',
+          '✅ Scan complete. No new jobs found.',
+          true,
         );
       } else {
-        const justNow = latestJobs.filter(
-          j => Date.now() - j.createdAt.getTime() < 5 * 60 * 1000,
+        await notifyUsersWithPreferences(
+          `✅ Found ${newJobsCount} new job${newJobsCount > 1 ? 's' : ''}! Check your notifications.`,
         );
-        const lastHour = latestJobs.filter(j => {
-          const age = Date.now() - j.createdAt.getTime();
-          return age >= 5 * 60 * 1000 && age < 60 * 60 * 1000;
-        });
-
-        let summary = `✅ Scan complete!\n\n`;
-
-        if (justNow.length > 0) {
-          summary += `🔥 ${justNow.length} job${justNow.length > 1 ? 's' : ''} posted just now!\n`;
-        }
-        if (lastHour.length > 0) {
-          summary += `⏰ ${lastHour.length} job${lastHour.length > 1 ? 's' : ''} from the last hour\n`;
-        }
-
-        summary += `\nYou'll receive notifications for jobs matching your preferences.`;
-
-        await notifyUsersWithPreferences(summary);
       }
-
-      console.log(
-        `✅ Auto scan completed: ${job.name} - ${latestJobs.length} recent jobs`,
-      );
     } catch (error) {
-      console.error(`Error in auto scan ${job.name}:`, error);
+      console.error('❌ Auto scan error:', error);
       await notifyUsersWithPreferences(
         '❌ Scan failed. Will retry automatically.',
       );
@@ -124,4 +91,4 @@ new Worker(
   },
 );
 
-console.log('Scanner worker started');
+console.log('✅ Scanner worker started');
