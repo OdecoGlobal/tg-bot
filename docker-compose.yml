@@ -5,7 +5,7 @@ services:
     container_name: job-bot-db
     restart: unless-stopped
     env_file:
-      - .env.production
+      - .env
     environment:
       POSTGRES_USER: jobbot
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -53,7 +53,7 @@ services:
       redis:
         condition: service_healthy
     env_file:
-      - .env.production
+      - .env
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://jobbot:${DB_PASSWORD}@postgres:5432/jobbot

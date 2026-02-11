@@ -10,15 +10,16 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m' 
 
-if [ ! -f .env.production ]; then
-    echo -e "${RED}❌ Error: .env.production not found!${NC}"
-    echo "Please create .env.production with your secrets."
+if [ ! -f .env ]; then
+    echo -e "${RED}❌ Error: .env not found!${NC}"
+    echo "Please create .env with your secrets."
     exit 1
 fi
 
 
 echo -e "${BLUE}📥 Pulling latest code...${NC}"
-git pull
+git fetch origin main
+git reset --hard origin/main
 
 
 echo -e "${BLUE}🔨 Building Docker images...${NC}"

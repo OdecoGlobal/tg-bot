@@ -17,7 +17,7 @@ COPY src ./src
 
 RUN npm run build
 
-RUN npm prune --production
+# RUN npm prune --production
 
 EXPOSE 7000
 
