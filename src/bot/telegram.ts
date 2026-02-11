@@ -279,13 +279,11 @@ telegramBot.onText(/\/debug/, async msg => {
   }
 });
 
-// Handles both /set command and plain text keywords
 telegramBot.on('message', async msg => {
   const chatId = msg.chat.id.toString();
   let text = msg.text?.trim();
   if (!text) return;
 
-  // Detect if it’s a command like /set
   if (text.startsWith('/set')) {
     text = text.replace(/^\/set\s+/i, '').trim();
     if (!text) {
@@ -295,14 +293,11 @@ telegramBot.on('message', async msg => {
       );
     }
   } else if (text.startsWith('/')) {
-    // Ignore other commands
     return;
   }
 
-  // Split multiple keywords by space and normalize
   const keywords = text.split(/\s+/).map(k => k.toLowerCase());
 
-  // Upsert user in DB
   const user = await prisma.user.upsert({
     where: { telegramId: chatId },
     update: {},
@@ -327,7 +322,6 @@ telegramBot.on('message', async msg => {
     }
   }
 
-  // Send feedback to user
   if (added.length > 0) {
     await telegramBot.sendMessage(
       chatId,
