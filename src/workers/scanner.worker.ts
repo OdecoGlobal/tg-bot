@@ -46,8 +46,6 @@ new Worker(
   'scannerQueue',
   async job => {
     try {
-      console.log('🔍 Auto scan started');
-
       const scanOptions = {
         maxJobsPerSite: 20,
         maxAgeInDays: 0.04,
@@ -72,16 +70,10 @@ new Worker(
           '✅ Scan complete. No new jobs found.',
           true,
         );
-      } else {
-        await notifyUsersWithPreferences(
-          `✅ Found ${newJobsCount} new job${newJobsCount > 1 ? 's' : ''}! Check your notifications.`,
-        );
       }
     } catch (error) {
       console.error('❌ Auto scan error:', error);
-      await notifyUsersWithPreferences(
-        '❌ Scan failed. Will retry automatically.',
-      );
+
       throw error;
     }
   },
@@ -90,5 +82,3 @@ new Worker(
     concurrency: 1,
   },
 );
-
-console.log('✅ Scanner worker started');

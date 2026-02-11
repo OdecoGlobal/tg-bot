@@ -5,7 +5,6 @@ const parser = new Parser();
 export async function fetchWeWorkRemotely(keyword: string) {
   try {
     const url = `https://weworkremotely.com/remote-jobs.rss`;
-    console.log(`   Fetching: ${url}`);
 
     const feed = await parser.parseURL(url);
 
@@ -17,8 +16,6 @@ export async function fetchWeWorkRemotely(keyword: string) {
           cat.toLowerCase().includes(keyword.toLowerCase()),
         ),
     );
-
-    console.log(`   Found ${filtered.length} jobs matching "${keyword}"`);
 
     return filtered.map(item => ({
       title: item.title!,

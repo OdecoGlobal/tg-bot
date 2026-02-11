@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { connection } from '../lib/constants';
 import { sendTelegramMessage } from '../bot/telegram';
 import { prisma } from '../db/prisma';
+import { htmlToText } from 'html-to-text';
 
 function formatMessage(jobData: any, keyword: string, isManualScan: boolean) {
   const jobAge = Date.now() - jobData.createdAt.getTime();
@@ -19,6 +20,16 @@ function formatMessage(jobData: any, keyword: string, isManualScan: boolean) {
 
   const scanType = isManualScan ? '🔍 Manual Scan' : '🆕 New Job';
 
+  const cleanDescription = htmlToText(jobData.description || '', {
+    wordwrap: 130,
+    selectors: [{ selector: 'a', options: { ignoreHref: true } }],
+  });
+
+  const shortDescription =
+    cleanDescription.length > 200
+      ? cleanDescription.substring(0, 200) + '...'
+      : cleanDescription;
+
   const message = `
 ${scanType}
 
@@ -27,7 +38,7 @@ ${scanType}
 🔖 ${keyword} | 📍 ${jobData.source}
 ⏰ Posted: ${timeAgo}
 
-${jobData.description.substring(0, 200)}${jobData.description.length > 200 ? '...' : ''}
+${shortDescription}
 
 [Apply Here](${jobData.link})
         `.trim();
@@ -37,10 +48,6 @@ ${jobData.description.substring(0, 200)}${jobData.description.length > 200 ? '..
 new Worker(
   'processQueue',
   async job => {
-    console.log(`🔔 PROCESS WORKER TRIGGERED`);
-    console.log(`   Job data:`, job.data);
-    console.log(`   isManualScan:`, job.data.isManualScan);
-    console.log(`   triggeringUserId:`, job.data.triggeringUserId);
     try {
       const {
         job: jobId,
@@ -48,10 +55,6 @@ new Worker(
         isManualScan = false,
         triggeringUserId,
       } = job.data;
-
-      console.log(
-        `Processing job notification for job ID: ${jobId} (manual: ${isManualScan})`,
-      );
 
       const jobData = await prisma.job.findUnique({
         where: { id: jobId },
@@ -70,7 +73,6 @@ new Worker(
 
         if (user) {
           await sendTelegramMessage(user.telegramId, message);
-          console.log(`✅ Sent manual scan job to user ${user.telegramId}`);
         }
         return;
       }
@@ -90,13 +92,10 @@ new Worker(
       for (const user of interestedUsers) {
         try {
           await sendTelegramMessage(user.telegramId, message);
-          console.log(`✅ Sent ${keyword} job to user ${user.telegramId}`);
         } catch (error) {
           console.error(`❌ Failed to send to user ${user.telegramId}:`, error);
         }
       }
-
-      console.log(`Finished processing job ${jobId}`);
     } catch (error) {
       console.error('Error processing job:', error);
       throw error;
@@ -107,5 +106,3 @@ new Worker(
     concurrency: 5,
   },
 );
-
-console.log('Process worker started');
