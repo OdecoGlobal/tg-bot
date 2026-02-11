@@ -44,10 +44,10 @@ async function notifyUsersWithPreferences(
 
 new Worker(
   'scannerQueue',
-  async job => {
+  async () => {
     try {
       const scanOptions = {
-        maxJobsPerSite: 20,
+        maxJobsPerSite: 10,
         maxAgeInDays: 0.04,
         isManualScan: false,
       };
@@ -66,10 +66,10 @@ new Worker(
       const newJobsCount = jobCountAfter - jobCountBefore;
 
       if (newJobsCount === 0) {
-        await notifyUsersWithPreferences(
-          '✅ Scan complete. No new jobs found.',
-          true,
-        );
+        // await notifyUsersWithPreferences(
+        //   '✅ Scan complete. No new jobs found.',
+        //   true,
+        // );
       }
     } catch (error) {
       console.error('❌ Auto scan error:', error);

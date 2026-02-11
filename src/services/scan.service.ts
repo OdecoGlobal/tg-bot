@@ -18,7 +18,7 @@ async function handleJobs(
   options: ScanOptions = {},
 ) {
   const {
-    maxJobsPerSite = 100,
+    maxJobsPerSite = 10,
     maxAgeInDays,
     isManualScan = false,
     triggeringUserId,

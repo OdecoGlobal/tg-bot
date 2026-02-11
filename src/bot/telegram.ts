@@ -2,6 +2,7 @@ import TelegramBot from 'node-telegram-bot-api';
 import { prisma } from '../db/prisma';
 
 const ADMIN_TELEGRAM_CHAT_ID = process.env.ADMIN_TELEGRAM_CHAT_ID!;
+
 export const telegramBot = new TelegramBot(process.env.TELEGRAM_TOKEN!, {
   polling: {
     interval: 300,
@@ -94,7 +95,7 @@ telegramBot.onText(/\/start/, async msg => {
       `/preferences - View preferences\n` +
       `/clear - Clear preferences\n` +
       `/scan - Manually scan jobs\n` +
-      `/debug - View system stats (admin only)`,
+      `${chatId === ADMIN_TELEGRAM_CHAT_ID && '/debug - View system stats (admin only)'}`,
   );
 });
 
@@ -190,7 +191,7 @@ telegramBot.onText(/\/scan/, async msg => {
   await telegramBot.sendMessage(
     chatId,
     '🔍 Scanning...\n\n' +
-      '• Max 20 jobs per site\n' +
+      '• Max 10 jobs per site\n' +
       '• Jobs from last 2 days only\n\n' +
       'This may take a moment...',
   );
@@ -200,7 +201,7 @@ telegramBot.onText(/\/scan/, async msg => {
       await import('../services/scan.service');
 
     const scanOptions = {
-      maxJobsPerSite: 20,
+      maxJobsPerSite: 10,
       maxAgeInDays: 2,
       isManualScan: true,
       triggeringUserId: chatId,
