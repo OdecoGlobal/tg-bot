@@ -209,6 +209,7 @@ telegramBot.onText(/\/scan/, async msg => {
       maxJobsPerSite: 20,
       maxAgeInDays: 2,
       isManualScan: true,
+      triggeringUserId: chatId,
     };
 
     await scanRemoteOKJobs(scanOptions);

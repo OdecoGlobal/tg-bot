@@ -8,6 +8,7 @@ interface ScanOptions {
   maxJobsPerSite?: number;
   maxAgeInDays?: number;
   isManualScan?: boolean;
+  triggeringUserId?: string;
 }
 
 async function handleJobs(
@@ -16,7 +17,12 @@ async function handleJobs(
   jobs: any[],
   options: ScanOptions = {},
 ) {
-  const { maxJobsPerSite = 100, maxAgeInDays, isManualScan = false } = options;
+  const {
+    maxJobsPerSite = 100,
+    maxAgeInDays,
+    isManualScan = false,
+    triggeringUserId,
+  } = options;
 
   console.log(`\n📦 handleJobs called:`);
   console.log(`   Source: ${source}`);
@@ -49,12 +55,12 @@ async function handleJobs(
       });
 
       newJobsCount++;
-      console.log(`   ✅ NEW JOB #${newJobsCount}: ${created.title}`);
 
       await processQueue.add('processJob', {
         job: created.id,
         keyword,
         isManualScan,
+        triggeringUserId,
       });
 
       console.log(`   📬 Added to notification queue`);
@@ -72,6 +78,7 @@ async function handleJobs(
             job: exists.id,
             keyword,
             isManualScan,
+            triggeringUserId,
           });
         } else {
           console.log(
