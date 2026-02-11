@@ -62,7 +62,7 @@ export async function setupCommands() {
       description: 'Start the bot and subscribe to job alerts',
     },
     { command: 'stop', description: 'Unsubscribe from job alerts' },
-    { command: 'setkeyword', description: 'Set your job search keyword' },
+    { command: 'set', description: 'Set your job search keyword' },
     { command: 'preferences', description: 'View your preferences' },
     { command: 'clear', description: 'Clear all preferences' },
     { command: 'scan', description: 'Manually trigger a job scan' },
@@ -75,7 +75,7 @@ export async function setupCommands() {
         description: 'Start the bot and subscribe to job alerts',
       },
       { command: 'stop', description: 'Unsubscribe from job alerts' },
-      { command: 'setkeyword', description: 'Set your job search keyword' },
+      { command: 'set', description: 'Set your job search keyword' },
       { command: 'preferences', description: 'View your preferences' },
       { command: 'clear', description: 'Clear all preferences' },
       { command: 'scan', description: 'Manually trigger a job scan' },
@@ -101,7 +101,7 @@ telegramBot.onText(/\/start/, async msg => {
       `Commands:\n` +
       `/start - Start the bot\n` +
       `/stop - Unsubscribe\n` +
-      `/setkeyword - Add keyword\n` +
+      `/set - Add keyword\n` +
       `/preferences - View preferences\n` +
       `/clear - Clear preferences\n` +
       `/scan - Manually scan jobs\n` +
@@ -136,7 +136,7 @@ telegramBot.onText(/\/preferences/, async msg => {
   if (!user?.preferences || user.preferences.length === 0) {
     await telegramBot.sendMessage(
       chatId,
-      "You don't have any preferences set yet.\n\nJust send me keywords like 'react' or 'python'!",
+      "You don't have any preferences set yet.\n\nJust send me keywords like 'react' or 'python'! or use /set <keyword>",
     );
     return;
   }
@@ -162,55 +162,30 @@ telegramBot.onText(/\/clear/, async msg => {
   await telegramBot.sendMessage(chatId, '✅ All preferences cleared!');
 });
 
-telegramBot.onText(/\/setkeyword (.+)/, async (msg, match) => {
-  const chatId = msg.chat.id.toString();
-  const keyword = match?.[1]?.trim().toLowerCase();
-
-  if (!keyword) {
-    return telegramBot.sendMessage(
-      chatId,
-      '❌ Please provide a keyword. Usage: /setkeyword react',
-    );
-  }
-
-  const user = await prisma.user.upsert({
-    where: { telegramId: chatId },
-    update: {},
-    create: { telegramId: chatId, name: msg.from?.first_name, active: true },
-  });
-
-  const existing = await prisma.preference.findFirst({
-    where: { userId: user.id, keyword },
-  });
-
-  if (existing) {
-    return telegramBot.sendMessage(
-      chatId,
-      `You're already tracking "${keyword}" jobs!`,
-    );
-  }
-
-  await prisma.preference.create({
-    data: { userId: user.id, keyword },
-  });
-  await telegramBot.sendMessage(
-    chatId,
-    `✅ Added "${keyword}" to your preferences!`,
-  );
-});
-
 telegramBot.onText(/\/scan/, async msg => {
   const chatId = msg.chat.id.toString();
-
-  await telegramBot.sendMessage(
-    chatId,
-    '🔍 Scanning...\n\n' +
-      '• Max 10 jobs per site\n' +
-      '• Jobs from last 2 days only\n\n' +
-      'This may take a moment...',
-  );
-
   try {
+    const user = await prisma.user.findUnique({
+      where: { telegramId: chatId },
+      include: { preferences: true },
+    });
+
+    if (!user || !user.preferences.length) {
+      await telegramBot.sendMessage(
+        chatId,
+        '⚠️ You have no scan preferences set!\n\nPlease add at least one keyword with /set <keyword> before scanning.',
+      );
+      return;
+    }
+
+    await telegramBot.sendMessage(
+      chatId,
+      '🔍 Scanning...\n\n' +
+        '• Max 10 jobs per site\n' +
+        '• Jobs from last 2 days only\n\n' +
+        'This may take a moment...',
+    );
+
     const { scanRemoteOKJobs, scanWeWorkRemotelyJobs, scanRemotiveJobs } =
       await import('../services/scan.service');
 
@@ -304,49 +279,68 @@ telegramBot.onText(/\/debug/, async msg => {
   }
 });
 
+// Handles both /set command and plain text keywords
 telegramBot.on('message', async msg => {
-  if (msg.text?.startsWith('/')) return;
-
   const chatId = msg.chat.id.toString();
-  const keyword = msg.text?.trim().toLowerCase();
+  let text = msg.text?.trim();
+  if (!text) return;
 
-  if (!keyword) return;
-
-  const user = await prisma.user.upsert({
-    where: { telegramId: chatId },
-    update: {},
-    create: {
-      telegramId: chatId,
-      name: msg.from?.first_name,
-    },
-  });
-
-  const existing = await prisma.preference.findFirst({
-    where: {
-      userId: user.id,
-      keyword: keyword,
-    },
-  });
-
-  if (existing) {
-    await telegramBot.sendMessage(
-      chatId,
-      `You're already tracking "${keyword}" jobs!`,
-    );
+  // Detect if it’s a command like /set
+  if (text.startsWith('/set')) {
+    text = text.replace(/^\/set\s+/i, '').trim();
+    if (!text) {
+      return telegramBot.sendMessage(
+        chatId,
+        '❌ Please provide at least one keyword. Usage: /set react python',
+      );
+    }
+  } else if (text.startsWith('/')) {
+    // Ignore other commands
     return;
   }
 
-  await prisma.preference.create({
-    data: {
-      keyword: keyword,
-      userId: user.id,
-    },
+  // Split multiple keywords by space and normalize
+  const keywords = text.split(/\s+/).map(k => k.toLowerCase());
+
+  // Upsert user in DB
+  const user = await prisma.user.upsert({
+    where: { telegramId: chatId },
+    update: {},
+    create: { telegramId: chatId, name: msg.from?.first_name, active: true },
   });
 
-  await telegramBot.sendMessage(
-    chatId,
-    `✅ Added "${keyword}" to your preferences!\n\nI'll notify you about new ${keyword} jobs.`,
-  );
+  const added: string[] = [];
+  const alreadyTracking: string[] = [];
+
+  for (const keyword of keywords) {
+    const existing = await prisma.preference.findFirst({
+      where: { userId: user.id, keyword },
+    });
+
+    if (existing) {
+      alreadyTracking.push(keyword);
+    } else {
+      await prisma.preference.create({
+        data: { userId: user.id, keyword },
+      });
+      added.push(keyword);
+    }
+  }
+
+  // Send feedback to user
+  if (added.length > 0) {
+    await telegramBot.sendMessage(
+      chatId,
+      `✅ Added: ${added.join(', ')}\n\nI'll notify you about new jobs for these keywords.`,
+    );
+  }
+
+  if (alreadyTracking.length > 0) {
+    await telegramBot.sendMessage(
+      chatId,
+      `ℹ️ You're already tracking: ${alreadyTracking.join(', ')}`,
+    );
+  }
 });
 
 export async function sendTelegramMessage(
