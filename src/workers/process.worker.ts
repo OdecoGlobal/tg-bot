@@ -37,6 +37,10 @@ ${jobData.description.substring(0, 200)}${jobData.description.length > 200 ? '..
 new Worker(
   'processQueue',
   async job => {
+    console.log(`🔔 PROCESS WORKER TRIGGERED`);
+    console.log(`   Job data:`, job.data);
+    console.log(`   isManualScan:`, job.data.isManualScan);
+    console.log(`   triggeringUserId:`, job.data.triggeringUserId);
     try {
       const {
         job: jobId,
