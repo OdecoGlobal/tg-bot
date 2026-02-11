@@ -66,31 +66,29 @@ new Worker(
 
         if (user) {
           await sendTelegramMessage(user.telegramId, message);
+          console.log(`✅ Sent manual scan job to user ${user.telegramId}`);
         }
-      } else {
-        const interestedUsers = await prisma.user.findMany({
-          where: {
-            preferences: {
-              some: {
-                keyword: keyword,
-              },
+        return;
+      }
+      const interestedUsers = await prisma.user.findMany({
+        where: {
+          preferences: {
+            some: {
+              keyword: keyword,
             },
           },
-          include: {
-            preferences: true,
-          },
-        });
+        },
+        include: {
+          preferences: true,
+        },
+      });
 
-        for (const user of interestedUsers) {
-          try {
-            await sendTelegramMessage(user.telegramId, message);
-            console.log(`✅ Sent ${keyword} job to user ${user.telegramId}`);
-          } catch (error) {
-            console.error(
-              `❌ Failed to send to user ${user.telegramId}:`,
-              error,
-            );
-          }
+      for (const user of interestedUsers) {
+        try {
+          await sendTelegramMessage(user.telegramId, message);
+          console.log(`✅ Sent ${keyword} job to user ${user.telegramId}`);
+        } catch (error) {
+          console.error(`❌ Failed to send to user ${user.telegramId}:`, error);
         }
       }
 
