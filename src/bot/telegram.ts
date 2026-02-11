@@ -16,7 +16,7 @@ telegramBot.on('polling_error', (error: any) => {
   console.error('❌ Polling error:', error.code, error.message);
 
   if (error.code === 'EFATAL') {
-    console.log('🔄 EFATAL detected - attempting recovery...');
+    console.error('🔄 EFATAL detected - attempting recovery...');
 
     telegramBot
       .stopPolling()
@@ -24,7 +24,6 @@ telegramBot.on('polling_error', (error: any) => {
         console.log('✅ Polling stopped');
 
         setTimeout(() => {
-          console.log('🔄 Restarting polling...');
           telegramBot
             .startPolling({ restart: true })
             .then(() => console.log('✅ Polling restarted successfully'))
@@ -115,7 +114,6 @@ telegramBot.onText(/\/stop/, async msg => {
 
 telegramBot.onText(/\/preferences/, async msg => {
   const chatId = msg.chat.id.toString();
-  console.log(`📨 /preferences command from ${chatId}`);
 
   const user = await prisma.user.findUnique({
     where: { telegramId: chatId },
@@ -139,7 +137,6 @@ telegramBot.onText(/\/preferences/, async msg => {
 
 telegramBot.onText(/\/clear/, async msg => {
   const chatId = msg.chat.id.toString();
-  console.log(`📨 /clear command from ${chatId}`);
 
   await prisma.preference.deleteMany({
     where: {
@@ -189,7 +186,6 @@ telegramBot.onText(/\/setkeyword (.+)/, async (msg, match) => {
 
 telegramBot.onText(/\/scan/, async msg => {
   const chatId = msg.chat.id.toString();
-  console.log(`📨 /scan command from ${chatId}`);
 
   await telegramBot.sendMessage(
     chatId,
@@ -202,8 +198,6 @@ telegramBot.onText(/\/scan/, async msg => {
   try {
     const { scanRemoteOKJobs, scanWeWorkRemotelyJobs, scanRemotiveJobs } =
       await import('../services/scan.service');
-
-    console.log('🧪 Manual scan triggered by user');
 
     const scanOptions = {
       maxJobsPerSite: 20,
@@ -239,7 +233,6 @@ telegramBot.onText(/\/scan/, async msg => {
 
 telegramBot.onText(/\/debug/, async msg => {
   const chatId = msg.chat.id.toString();
-  console.log(`📨 /debug command from ${chatId}`);
   if (chatId !== ADMIN_TELEGRAM_CHAT_ID) {
     return;
   }
@@ -304,8 +297,6 @@ telegramBot.on('message', async msg => {
 
   if (!keyword) return;
 
-  console.log(`📨 Received keyword "${keyword}" from ${chatId}`);
-
   const user = await prisma.user.upsert({
     where: { telegramId: chatId },
     update: {},
@@ -337,8 +328,6 @@ telegramBot.on('message', async msg => {
     },
   });
 
-  console.log(`✅ Added preference "${keyword}" for user ${chatId}`);
-
   await telegramBot.sendMessage(
     chatId,
     `✅ Added "${keyword}" to your preferences!\n\nI'll notify you about new ${keyword} jobs.`,
@@ -357,7 +346,6 @@ export async function sendTelegramMessage(
 }
 
 setTimeout(() => {
-  console.log('🚀 Starting Telegram bot polling...');
   telegramBot
     .startPolling({ restart: true })
     .then(() => {
@@ -365,12 +353,7 @@ setTimeout(() => {
     })
     .catch(err => {
       console.error('❌ Failed to start polling:', err);
-      console.log('💡 Make sure webhook is deleted. Run:');
-      console.log(
-        `   curl -X POST "https://api.telegram.org/bot<TOKEN>/deleteWebhook?drop_pending_updates=true"`,
-      );
     });
 }, 2000);
 
 setupCommands().then(() => console.log('✅ Telegram commands configured'));
-console.log('Telegram bot initialized');
