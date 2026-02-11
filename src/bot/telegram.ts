@@ -282,21 +282,29 @@ telegramBot.onText(/\/debug/, async msg => {
 telegramBot.on('message', async msg => {
   const chatId = msg.chat.id.toString();
   let text = msg.text?.trim();
+
   if (!text) return;
 
   if (text.startsWith('/set')) {
-    text = text.replace(/^\/set\s+/i, '').trim();
+    text = text.replace(/^\/set\s*/i, '').trim();
+
     if (!text) {
       return telegramBot.sendMessage(
         chatId,
-        '❌ Please provide at least one keyword. Usage: /set react python',
+        '❌ Please provide at least one keyword.\n\nUsage: /set react python\n\nOr just send keywords directly without any command!',
       );
     }
   } else if (text.startsWith('/')) {
     return;
   }
 
-  const keywords = text.split(/\s+/).map(k => k.toLowerCase());
+  const keywords = text
+    .split(/[\s,]+/)
+    .map(k => k.toLowerCase())
+    .filter(k => k.length > 0);
+  if (keywords.length === 0) {
+    return;
+  }
 
   const user = await prisma.user.upsert({
     where: { telegramId: chatId },
@@ -322,18 +330,19 @@ telegramBot.on('message', async msg => {
     }
   }
 
+  let response = '';
+
   if (added.length > 0) {
-    await telegramBot.sendMessage(
-      chatId,
-      `✅ Added: ${added.join(', ')}\n\nI'll notify you about new jobs for these keywords.`,
-    );
+    response += `✅ Added: ${added.join(', ')}\n\nI'll notify you about new jobs for these keywords.`;
   }
 
   if (alreadyTracking.length > 0) {
-    await telegramBot.sendMessage(
-      chatId,
-      `ℹ️ You're already tracking: ${alreadyTracking.join(', ')}`,
-    );
+    if (response) response += '\n\n';
+    response += `ℹ️ Already tracking: ${alreadyTracking.join(', ')}`;
+  }
+
+  if (response) {
+    await telegramBot.sendMessage(chatId, response);
   }
 });
 
