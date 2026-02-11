@@ -63,7 +63,7 @@ async function handleJobs(
         triggeringUserId,
       });
 
-      console.log(`   📬 Added to notification queue`);
+      console.log(`📬 Added to notification queue`);
     } else {
       if (isManualScan && maxAgeInDays) {
         const jobAge = Date.now() - exists.createdAt.getTime();

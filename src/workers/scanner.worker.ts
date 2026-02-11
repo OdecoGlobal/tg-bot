@@ -1,77 +1,127 @@
 import { Worker } from 'bullmq';
 import { connection } from '../lib/constants';
+import {
+  scanRemoteOKJobs,
+  scanWeWorkRemotelyJobs,
+  scanRemotiveJobs,
+} from '../services/scan.service';
 import { sendTelegramMessage } from '../bot/telegram';
 import { prisma } from '../db/prisma';
 
+async function notifyUsersWithPreferences(message: string) {
+  const activeUsers = await prisma.user.findMany({
+    where: {
+      active: true,
+      preferences: {
+        some: {},
+      },
+    },
+  });
+
+  for (const user of activeUsers) {
+    try {
+      await sendTelegramMessage(user.telegramId, message);
+    } catch (error) {
+      console.error(`Failed to notify user ${user.telegramId}:`, error);
+    }
+  }
+}
+
+async function getLatestJobsSummary() {
+  const cutoffTime = new Date(Date.now() - 10 * 60 * 1000);
+  const recentJobs = await prisma.job.findMany({
+    where: {
+      createdAt: {
+        gte: cutoffTime,
+      },
+    },
+    select: {
+      id: true,
+      title: true,
+      source: true,
+      keyword: true,
+      createdAt: true,
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  });
+
+  return recentJobs;
+}
+
 new Worker(
-  'processQueue',
+  'scannerQueue',
   async job => {
     try {
-      const { job: jobId, keyword } = job.data;
+      console.log(`🔍 Auto scan started: ${job.name}`);
+
+      await notifyUsersWithPreferences('🔍 Scanning for latest jobs...');
+
+      const scanOptions = {
+        maxJobsPerSite: 20,
+        maxAgeInDays: 0.25,
+        isManualScan: false,
+      };
+
+      switch (job.name) {
+        case 'scanRemoteOk':
+          await scanRemoteOKJobs(scanOptions);
+          break;
+        case 'scanWeWorkRemotely':
+          await scanWeWorkRemotelyJobs(scanOptions);
+          break;
+        case 'scanIndeed':
+          await scanRemotiveJobs(scanOptions);
+          break;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      const latestJobs = await getLatestJobsSummary();
+
+      if (latestJobs.length === 0) {
+        await notifyUsersWithPreferences(
+          '✅ Scan complete. No new jobs found in the last few hours.',
+        );
+      } else {
+        const justNow = latestJobs.filter(
+          j => Date.now() - j.createdAt.getTime() < 5 * 60 * 1000,
+        );
+        const lastHour = latestJobs.filter(j => {
+          const age = Date.now() - j.createdAt.getTime();
+          return age >= 5 * 60 * 1000 && age < 60 * 60 * 1000;
+        });
+
+        let summary = `✅ Scan complete!\n\n`;
+
+        if (justNow.length > 0) {
+          summary += `🔥 ${justNow.length} job${justNow.length > 1 ? 's' : ''} posted just now!\n`;
+        }
+        if (lastHour.length > 0) {
+          summary += `⏰ ${lastHour.length} job${lastHour.length > 1 ? 's' : ''} from the last hour\n`;
+        }
+
+        summary += `\nYou'll receive notifications for jobs matching your preferences.`;
+
+        await notifyUsersWithPreferences(summary);
+      }
 
       console.log(
-        `Processing job notification for job ID: ${jobId}, keyword: ${keyword}`,
+        `✅ Auto scan completed: ${job.name} - ${latestJobs.length} recent jobs`,
       );
-
-      const jobData = await prisma.job.findUnique({ where: { id: jobId } });
-      if (!jobData) {
-        console.error(`Job ${jobId} not found in database`);
-        return;
-      }
-
-      const interestedUsers = await prisma.user.findMany({
-        where: {
-          active: true,
-          preferences: { some: { keyword: keyword } },
-        },
-        include: { preferences: true },
-      });
-
-      for (const user of interestedUsers) {
-        const message = `
-🆕 *New ${jobData.source} Job!*
-
-*${jobData.title}*
-🏢 Company: ${jobData.company}
-🔖 Keyword: ${keyword}
-
-${jobData.description.substring(0, 200)}${jobData.description.length > 200 ? '...' : ''}
-
-[Apply Here](${jobData.link})
-        `.trim();
-
-        try {
-          await sendTelegramMessage(user.telegramId, message);
-          console.log(`✅ Sent ${keyword} job to user ${user.telegramId}`);
-        } catch (error: any) {
-          console.error(`❌ Failed to send to user ${user.telegramId}:`, error);
-
-          if (
-            error.response?.body?.description?.includes(
-              'bot was blocked by the user',
-            )
-          ) {
-            console.log(
-              `User ${user.telegramId} blocked the bot. Marking inactive.`,
-            );
-            await prisma.user.updateMany({
-              where: { telegramId: user.telegramId },
-              data: { active: false },
-            });
-          }
-        }
-      }
-
-      console.log(`Finished processing job ${jobId}`);
     } catch (error) {
-      console.error('Error processing job:', error);
+      console.error(`Error in auto scan ${job.name}:`, error);
+      await notifyUsersWithPreferences(
+        '❌ Scan failed. Will retry automatically.',
+      );
       throw error;
     }
   },
   {
     connection,
-    concurrency: 5,
+    concurrency: 1,
   },
 );
 
-console.log('Process worker started');
+console.log('Scanner worker started');
