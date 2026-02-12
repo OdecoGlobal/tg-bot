@@ -178,13 +178,22 @@ telegramBot.onText(/\/scan/, async msg => {
       return;
     }
 
+    // await telegramBot.sendMessage(
+    //   chatId,
+    //   '🔍 Scanning...\n\n' +
+    //     '• Max 10 jobs per site\n' +
+    //     '• Jobs from last 2 days only\n\n' +
+    //     'This may take a moment...',
+    // );
+
+    const keywords = user.preferences.map(p => p.keyword);
+
     await telegramBot.sendMessage(
       chatId,
-      '🔍 Scanning...\n\n' +
-        '• Max 10 jobs per site\n' +
-        '• Jobs from last 2 days only\n\n' +
-        'This may take a moment...',
+      `🔍 Scanning your keywords:\n\n${keywords.join(', ')}\n\nPlease wait...`,
     );
+
+    const scanStartedAt = new Date();
 
     const { scanRemoteOKJobs, scanWeWorkRemotelyJobs, scanRemotiveJobs } =
       await import('../services/scan.service');
@@ -200,18 +209,28 @@ telegramBot.onText(/\/scan/, async msg => {
     await scanWeWorkRemotelyJobs(scanOptions);
     await scanRemotiveJobs(scanOptions);
 
-    const jobCount = await prisma.job.count({
+    const deliveredCount = await prisma.jobDelivery.count({
       where: {
-        createdAt: {
-          gte: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+        userId: user.id,
+        deliveredAt: {
+          gte: scanStartedAt,
         },
       },
     });
 
-    await telegramBot.sendMessage(
-      chatId,
-      `✅ Manual scan completed!\n\n📊 Found ${jobCount} jobs from the last 2 days.`,
-    );
+    if (deliveredCount === 0) {
+      await telegramBot.sendMessage(
+        chatId,
+        '✅ Scan completed!\n\nNo new jobs found for your preferences.',
+      );
+    } else {
+      await telegramBot.sendMessage(
+        chatId,
+        `✅ Scan completed!\n\n🎯 Found ${deliveredCount} new job${
+          deliveredCount > 1 ? 's' : ''
+        }.`,
+      );
+    }
   } catch (error) {
     console.error('Error during manual scan:', error);
     await telegramBot.sendMessage(
