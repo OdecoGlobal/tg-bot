@@ -310,20 +310,14 @@ telegramBot.on('message', async msg => {
     if (!text) {
       return telegramBot.sendMessage(
         chatId,
-        '❌ Please provide at least one keyword.\n\nUsage: /set react python\n\nOr just send keywords directly without any command!',
+        '❌ Please provide a keyword.\n\nUsage: /set data analysis',
       );
     }
   } else if (text.startsWith('/')) {
     return;
   }
 
-  const keywords = text
-    .split(/[\s,]+/)
-    .map(k => k.toLowerCase())
-    .filter(k => k.length > 0);
-  if (keywords.length === 0) {
-    return;
-  }
+  const keyword = text.toLowerCase();
 
   const user = await prisma.user.upsert({
     where: { telegramId: chatId },
@@ -331,38 +325,25 @@ telegramBot.on('message', async msg => {
     create: { telegramId: chatId, name: msg.from?.first_name, active: true },
   });
 
-  const added: string[] = [];
-  const alreadyTracking: string[] = [];
+  const existing = await prisma.preference.findFirst({
+    where: { userId: user.id, keyword },
+  });
 
-  for (const keyword of keywords) {
-    const existing = await prisma.preference.findFirst({
-      where: { userId: user.id, keyword },
-    });
-
-    if (existing) {
-      alreadyTracking.push(keyword);
-    } else {
-      await prisma.preference.create({
-        data: { userId: user.id, keyword },
-      });
-      added.push(keyword);
-    }
+  if (existing) {
+    return telegramBot.sendMessage(
+      chatId,
+      `ℹ️ You're already tracking "${keyword}"`,
+    );
   }
 
-  let response = '';
+  await prisma.preference.create({
+    data: { userId: user.id, keyword },
+  });
 
-  if (added.length > 0) {
-    response += `✅ Added: ${added.join(', ')}\n\nI'll notify you about new jobs for these keywords.`;
-  }
-
-  if (alreadyTracking.length > 0) {
-    if (response) response += '\n\n';
-    response += `ℹ️ Already tracking: ${alreadyTracking.join(', ')}`;
-  }
-
-  if (response) {
-    await telegramBot.sendMessage(chatId, response);
-  }
+  await telegramBot.sendMessage(
+    chatId,
+    `✅ Added "${keyword}" to your preferences!\n\nI'll notify you about new jobs.`,
+  );
 });
 
 export async function sendTelegramMessage(
